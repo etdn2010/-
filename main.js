@@ -2,50 +2,58 @@
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 
-function createWindow() {
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+// 优化 Windows 透明窗口性能
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
 
-  const win = new BrowserWindow({
-    width: width,
-    height: height,
-    x: 0,
-    y: 0,
+let win;
+
+function createWindow() {
+  win = new BrowserWindow({
+    width: 300,
+    height: 300,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
     resizable: false,
-    skipTaskbar: false,
+    hasShadow: false,
+    backgroundColor: '#00000000',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
+      backgroundThrottling: false, // 防止窗口在后台时被限制性能
     },
   });
 
-  // 初始设置：允许鼠标穿透（这样启动时不会挡住屏幕中心）
-  win.setIgnoreMouseEvents(true, { forward: true });
-
   win.loadFile('index.html');
 
-  // 处理置顶切换
-  ipcMain.on('set-always-on-top', (event, flag) => {
-    win.setAlwaysOnTop(flag, 'screen-saver');
+  // 处理窗口大小动态调整
+  ipcMain.on('resize-window', (event, { width, height }) => {
+    if (win) {
+      // 增加一点边距以容纳投影或控制面板
+      const padding = 150; 
+      win.setSize(Math.round(width + padding), Math.round(height + padding), true);
+    }
   });
 
-  // 处理鼠标穿透切换：当鼠标进入摄像头区域时关闭穿透，离开时开启
-  ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    win.setIgnoreMouseEvents(ignore, options);
+  ipcMain.on('set-always-on-top', (event, flag) => {
+    win.setAlwaysOnTop(flag, 'screen-saver');
   });
 
   ipcMain.on('exit-app', () => {
     app.quit();
   });
 
-  // 开发时可以使用此项调试
-  // win.webContents.openDevTools();
+  // 确保窗口在准备好后显示
+  win.once('ready-to-show', () => {
+    win.show();
+    win.focus();
+  });
 }
 
-app.whenReady().then(createWindow);
+// 解决某些 Windows 环境下防火墙或图形驱动导致的启动问题
+app.on('ready', createWindow);
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
