@@ -1,0 +1,7 @@
+{
+  "name": "VisionCraft - Pro Camera Utility",
+  "description": "A sophisticated Windows-style camera utility with dynamic shaping, zooming, and transparency controls. Built with React and optimized for desktop use.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
