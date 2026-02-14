@@ -4,7 +4,6 @@ import { ShapeType, AppSettings, CameraDevice } from './types';
 import { getCameraDevices, getCameraStream } from './services/cameraService';
 import ControlPanel from './components/ControlPanel';
 
-// 判断是否在 Electron 环境中
 const isElectron = typeof window !== 'undefined' && !!(window as any).process && !!(window as any).process.type;
 
 const App: React.FC = () => {
@@ -27,6 +26,14 @@ const App: React.FC = () => {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [position, setPosition] = useState({ x: 100, y: 100 });
 
+  // 通知 Electron 是否忽略鼠标事件
+  const setIgnoreMouse = (ignore: boolean, forward = false) => {
+    if (isElectron) {
+      const { ipcRenderer } = (window as any).require('electron');
+      ipcRenderer.send('set-ignore-mouse-events', ignore, forward ? { forward: true } : undefined);
+    }
+  };
+
   const refreshDevices = useCallback(async () => {
     const cameraDevices = await getCameraDevices();
     setDevices(cameraDevices);
@@ -48,18 +55,17 @@ const App: React.FC = () => {
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
             setCameraError(null);
-            refreshDevices();
           }
         } else {
-          setCameraError('无法访问摄像头。');
+          setCameraError('无法访问摄像头设备。');
         }
       } catch (err: any) {
-        setCameraError(err.message || '访问摄像头失败。');
+        setCameraError(err.message || '访问失败。');
       }
     } else {
       if (videoRef.current) videoRef.current.srcObject = null;
     }
-  }, [settings.cameraEnabled, settings.activeDeviceId, refreshDevices]);
+  }, [settings.cameraEnabled, settings.activeDeviceId]);
 
   useEffect(() => {
     startCamera();
@@ -90,6 +96,7 @@ const App: React.FC = () => {
     e.preventDefault();
     setPanelPos({ x: e.clientX, y: e.clientY });
     setShowPanel(true);
+    setIgnoreMouse(false); // 展开面板时必须能点击
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -99,9 +106,11 @@ const App: React.FC = () => {
         x: e.clientX - position.x,
         y: e.clientY - position.y
       });
+      setIgnoreMouse(false);
     }
   };
 
+  // 全局鼠标移动监听，实现平滑拖动
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (isDragging) {
@@ -111,7 +120,9 @@ const App: React.FC = () => {
         });
       }
     };
-    const handleMouseUp = () => setIsDragging(false);
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
     if (isDragging) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
@@ -148,9 +159,21 @@ const App: React.FC = () => {
   return (
     <div 
       className="w-full h-screen bg-transparent relative overflow-hidden"
-      onMouseDown={() => setShowPanel(false)}
+      onMouseDown={() => {
+        if (showPanel) {
+          setShowPanel(false);
+          // 如果点击背景且面板关闭，则重新开启鼠标穿透
+          setIgnoreMouse(true, true);
+        }
+      }}
     >
       <div
+        onMouseEnter={() => setIgnoreMouse(false)}
+        onMouseLeave={() => {
+          if (!isDragging && !showPanel) {
+            setIgnoreMouse(true, true);
+          }
+        }}
         onWheel={handleWheel}
         onContextMenu={handleContextMenu}
         onMouseDown={handleMouseDown}
@@ -160,7 +183,7 @@ const App: React.FC = () => {
           top: `${position.y}px`,
           width: `${300 * settings.zoom}px`,
           opacity: settings.opacity,
-          zIndex: settings.alwaysOnTop ? 100 : 1
+          zIndex: 100
         }}
       >
         {settings.cameraEnabled && !cameraError ? (
@@ -172,31 +195,34 @@ const App: React.FC = () => {
             className="w-full h-full object-cover pointer-events-none mirror scale-x-[-1]"
           />
         ) : (
-          <div className="flex flex-col items-center justify-center text-center p-6 text-gray-400 gap-4">
+          <div className="flex flex-col items-center justify-center text-center p-6 text-gray-400 gap-4 pointer-events-none">
             {cameraError ? (
-              <div className="flex flex-col items-center gap-2">
-                <p className="text-xs text-red-400">错误: {cameraError}</p>
-                <button onClick={(e) => { e.stopPropagation(); startCamera(); }} className="text-[10px] bg-white/10 px-2 py-1 rounded">点击重试</button>
-              </div>
+              <p className="text-[10px] text-red-400">{cameraError}</p>
             ) : (
-              <p className="text-xs">摄像头已关闭</p>
+              <p className="text-xs">摄像头未开启</p>
             )}
           </div>
         )}
       </div>
 
       {showPanel && (
-        <ControlPanel
-          settings={settings}
-          devices={devices}
-          onUpdate={updateSettings}
-          onClose={() => setShowPanel(false)}
-          onExit={handleExit}
-          position={panelPos}
-        />
+        <div onMouseEnter={() => setIgnoreMouse(false)}>
+          <ControlPanel
+            settings={settings}
+            devices={devices}
+            onUpdate={updateSettings}
+            onClose={() => {
+              setShowPanel(false);
+              setIgnoreMouse(true, true);
+            }}
+            onExit={handleExit}
+            position={panelPos}
+          />
+        </div>
       )}
 
-      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-black/60 backdrop-blur-md rounded-full text-white text-[10px] opacity-60 pointer-events-none">
+      {/* 操作提示 */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-black/60 backdrop-blur-md rounded-full text-white text-[10px] opacity-60 pointer-events-none select-none">
         滚轮: 缩放 • 右键: 设置 • 左键拖拽: 移动
       </div>
     </div>
